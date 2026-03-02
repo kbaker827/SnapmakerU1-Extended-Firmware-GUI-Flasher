@@ -1,6 +1,6 @@
 # Snapmaker U1 Extended Firmware Flasher
 
-[![Version](https://img.shields.io/badge/version-1.1.0-blue.svg)](https://github.com/kbaker827/SnapmakerU1-Extended-Firmware-GUI-Flasher)
+[![Version](https://img.shields.io/badge/version-2.0.0-blue.svg)](https://github.com/kbaker827/SnapmakerU1-Extended-Firmware-GUI-Flasher)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)]()
 
