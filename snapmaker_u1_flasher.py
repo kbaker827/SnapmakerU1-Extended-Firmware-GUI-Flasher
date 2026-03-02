@@ -1,626 +1,659 @@
 #!/usr/bin/env python3
 """
-Snapmaker U1 Extended Firmware Flasher
-Cross-platform GUI for flashing firmware to Snapmaker U1 3D printer
-Supports: macOS, Windows, Linux
+Snapmaker U1 Extended Firmware Flasher v1.1
+Cross-platform GUI with embedded firmware & GitHub auto-update checking
 """
 
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 import threading
-import os
-import sys
-import platform
+import os, sys, platform, time, hashlib, json, re
 import serial
 import serial.tools.list_ports
-import time
-import hashlib
+import urllib.request, urllib.error
 from pathlib import Path
+from datetime import datetime
 
 class SnapmakerU1Flasher:
-    """Main application class"""
+    VERSION = "1.1.0"
+    APP_NAME = "Snapmaker U1 Firmware Flasher"
     
-    VERSION = "1.0.0"
+    # GitHub config - now points to renamed repo
+    GITHUB_USER = "kbaker827"
+    GITHUB_REPO = "SnapmakerU1-Extended-Firmware-GUI-Flasher"
+    GITHUB_API = f"https://api.github.com/repos/{GITHUB_USER}/{GITHUB_REPO}"
+    GITHUB_RELEASES = f"{GITHUB_API}/releases/latest"
+    
     BAUD_RATES = [115200, 250000, 500000, 1000000]
     DEFAULT_BAUD = 115200
     
     def __init__(self):
         self.root = tk.Tk()
-        self.root.title(f"Snapmaker U1 Firmware Flasher v{self.VERSION}")
-        self.root.geometry("700x550")
-        self.root.minsize(650, 500)
+        self.root.title(f"{self.APP_NAME} v{self.VERSION}")
+        self.root.geometry("750x650")
+        self.root.minsize(700, 600)
         
-        # Set DPI awareness on Windows
+        # Windows DPI awareness
         if sys.platform == 'win32':
             try:
                 from ctypes import windll
                 windll.shcore.SetProcessDpiAwareness(1)
-            except:
-                pass
+            except: pass
         
-        self.firmware_path = None
-        self.serial_connection = None
+        # State variables
+        self.bundled_firmware_path = None
+        self.bundled_firmware_version = None
+        self.latest_firmware_version = None
+        self.latest_firmware_url = None
+        self.needs_update = False
         self.is_flashing = False
         self.cancel_requested = False
         
+        self._find_bundled_firmware()
         self.setup_ui()
         self.refresh_ports()
+        self.root.after(1000, self.check_firmware_update)
+    
+    def _find_bundled_firmware(self):
+        """Look for bundled firmware in multiple locations"""
+        search_paths = [
+            Path(__file__).parent / "firmware.bin",
+            Path(__file__).parent / "firmware.hex",
+            Path(__file__).parent / "firmware" / "firmware.bin",
+            Path(getattr(sys, '_MEIPASS', '')) / "firmware.bin",  # PyInstaller
+            Path.home() / ".snapmaker_u1" / "firmware.bin",
+        ]
         
+        for path in search_paths:
+            if path.exists():
+                self.bundled_firmware_path = str(path)
+                self.bundled_firmware_version = self._extract_version(path)
+                break
+    
+    def _extract_version(self, filepath):
+        """Extract version from firmware filename or content"""
+        filename = filepath.name if isinstance(filepath, Path) else Path(filepath).name
+        
+        # Try filename pattern (v1.2.3 or 1.2.3)
+        match = re.search(r'v?(\d+\.\d+\.?\d*)', filename, re.IGNORECASE)
+        if match:
+            v = match.group(1)
+            return f"v{v}" if not v.startswith('v') else v
+        
+        # Try reading from file header
+        try:
+            with open(filepath, 'rb') as f:
+                header = f.read(2048).decode('utf-8', errors='ignore')
+                match = re.search(r'[Vv]ersion[:\s]*(\d+\.\d+\.?\d*)', header)
+                if match:
+                    return f"v{match.group(1)}"
+        except: pass
+        
+        # Fallback to file modification date
+        try:
+            mtime = os.path.getmtime(filepath)
+            return datetime.fromtimestamp(mtime).strftime("v%Y.%m.%d")
+        except:
+            return "unknown"
+    
     def setup_ui(self):
-        """Setup the user interface"""
-        # Main container with padding
-        main_frame = ttk.Frame(self.root, padding="15")
-        main_frame.pack(fill=tk.BOTH, expand=True)
+        main = ttk.Frame(self.root, padding="15")
+        main.pack(fill=tk.BOTH, expand=True)
         
-        # Header
-        self._create_header(main_frame)
-        
-        # Connection settings
-        self._create_connection_frame(main_frame)
-        
-        # Firmware selection
-        self._create_firmware_frame(main_frame)
-        
-        # Progress section
-        self._create_progress_frame(main_frame)
-        
-        # Log output
-        self._create_log_frame(main_frame)
-        
-        # Buttons
-        self._create_button_frame(main_frame)
-        
+        self._create_header(main)
+        self._create_firmware_section(main)
+        self._create_connection_section(main)
+        self._create_progress_section(main)
+        self._create_log_section(main)
+        self._create_buttons(main)
+    
     def _create_header(self, parent):
-        """Create header section"""
         header = ttk.Frame(parent)
-        header.pack(fill=tk.X, pady=(0, 10))
+        header.pack(fill=tk.X, pady=(0,10))
         
-        # Title
-        ttk.Label(
-            header,
-            text="🔧 Snapmaker U1 Extended Firmware Flasher",
-            font=('Segoe UI', 16, 'bold')
-        ).pack(anchor=tk.W)
-        
-        # Subtitle
-        ttk.Label(
-            header,
-            text=f"Version {self.VERSION} | Platform: {platform.system()} {platform.release()}",
-            font=('Segoe UI', 9),
-            foreground='gray'
-        ).pack(anchor=tk.W)
+        ttk.Label(header, text=f"🔧 {self.APP_NAME}", 
+                 font=('Segoe UI', 16, 'bold')).pack(anchor=tk.W)
+        ttk.Label(header, text=f"v{self.VERSION} | {platform.system()} {platform.machine()}", 
+                 font=('Segoe UI', 9), foreground='gray').pack(anchor=tk.W)
         
         ttk.Separator(parent, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=5)
+    
+    def _create_firmware_section(self, parent):
+        fw = ttk.LabelFrame(parent, text="Firmware Status", padding="10")
+        fw.pack(fill=tk.X, pady=(0,10))
         
-    def _create_connection_frame(self, parent):
-        """Create serial connection settings"""
-        conn_frame = ttk.LabelFrame(parent, text="Printer Connection", padding="10")
-        conn_frame.pack(fill=tk.X, pady=(0, 10))
+        # Bundled version
+        row1 = ttk.Frame(fw)
+        row1.pack(fill=tk.X, pady=2)
+        ttk.Label(row1, text="Bundled:", width=16, font=('Segoe UI', 9, 'bold')).pack(side=tk.LEFT)
+        self.bundled_var = tk.StringVar(value=f"{self.bundled_firmware_version or 'None'} ({self._fmt_size(self.bundled_firmware_path)})")
+        ttk.Label(row1, textvariable=self.bundled_var, font=('Consolas', 9)).pack(side=tk.LEFT)
         
-        # Port selection
-        port_row = ttk.Frame(conn_frame)
-        port_row.pack(fill=tk.X, pady=2)
+        # Latest version
+        row2 = ttk.Frame(fw)
+        row2.pack(fill=tk.X, pady=2)
+        ttk.Label(row2, text="Latest Available:", width=16, font=('Segoe UI', 9, 'bold')).pack(side=tk.LEFT)
+        self.latest_var = tk.StringVar(value="Checking...")
+        ttk.Label(row2, textvariable=self.latest_var, font=('Consolas', 9)).pack(side=tk.LEFT)
         
-        ttk.Label(port_row, text="Serial Port:", width=12).pack(side=tk.LEFT)
+        # Status & buttons
+        row3 = ttk.Frame(fw)
+        row3.pack(fill=tk.X, pady=5)
+        self.status_var = tk.StringVar(value="")
+        self.status_lbl = ttk.Label(row3, textvariable=self.status_var, font=('Segoe UI', 9, 'bold'))
+        self.status_lbl.pack(side=tk.LEFT)
         
+        self.update_btn = ttk.Button(row3, text="📥 Download Latest", 
+                                     command=self.download_latest, state=tk.DISABLED)
+        self.update_btn.pack(side=tk.RIGHT)
+        ttk.Button(row3, text="🔄 Check", command=self.check_firmware_update).pack(side=tk.RIGHT, padx=(0,5))
+        
+        # Source selection
+        row4 = ttk.Frame(fw)
+        row4.pack(fill=tk.X, pady=(10,0))
+        ttk.Label(row4, text="Flash Source:", font=('Segoe UI', 9, 'bold')).pack(side=tk.LEFT)
+        
+        self.source_var = tk.StringVar(value="bundled")
+        ttk.Radiobutton(row4, text="Use Bundled", variable=self.source_var, value="bundled").pack(side=tk.LEFT, padx=(10,5))
+        ttk.Radiobutton(row4, text="Download Latest", variable=self.source_var, value="download").pack(side=tk.LEFT, padx=(0,5))
+        ttk.Radiobutton(row4, text="Browse File", variable=self.source_var, value="browse").pack(side=tk.LEFT)
+    
+    def _create_connection_section(self, parent):
+        conn = ttk.LabelFrame(parent, text="Printer Connection", padding="10")
+        conn.pack(fill=tk.X, pady=(0,10))
+        
+        # Port
+        r1 = ttk.Frame(conn)
+        r1.pack(fill=tk.X, pady=2)
+        ttk.Label(r1, text="Serial Port:", width=12).pack(side=tk.LEFT)
         self.port_var = tk.StringVar()
-        self.port_combo = ttk.Combobox(
-            port_row, 
-            textvariable=self.port_var,
-            state="readonly",
-            width=30
-        )
-        self.port_combo.pack(side=tk.LEFT, padx=(5, 5))
+        self.port_combo = ttk.Combobox(r1, textvariable=self.port_var, state="readonly", width=35)
+        self.port_combo.pack(side=tk.LEFT, padx=(5,5))
+        ttk.Button(r1, text="🔄", command=self.refresh_ports, width=5).pack(side=tk.LEFT)
         
-        ttk.Button(
-            port_row,
-            text="🔄 Refresh",
-            command=self.refresh_ports,
-            width=10
-        ).pack(side=tk.LEFT)
-        
-        # Baud rate
-        baud_row = ttk.Frame(conn_frame)
-        baud_row.pack(fill=tk.X, pady=2)
-        
-        ttk.Label(baud_row, text="Baud Rate:", width=12).pack(side=tk.LEFT)
-        
+        # Baud
+        r2 = ttk.Frame(conn)
+        r2.pack(fill=tk.X, pady=2)
+        ttk.Label(r2, text="Baud Rate:", width=12).pack(side=tk.LEFT)
         self.baud_var = tk.StringVar(value=str(self.DEFAULT_BAUD))
-        baud_combo = ttk.Combobox(
-            baud_row,
-            textvariable=self.baud_var,
-            values=self.BAUD_RATES,
-            state="readonly",
-            width=15
-        )
-        baud_combo.pack(side=tk.LEFT, padx=(5, 0))
+        ttk.Combobox(r2, textvariable=self.baud_var, values=self.BAUD_RATES, 
+                    state="readonly", width=15).pack(side=tk.LEFT, padx=(5,10))
+        ttk.Button(r2, text="Test Connection", command=self.test_connection).pack(side=tk.LEFT)
+    
+    def _create_progress_section(self, parent):
+        prog = ttk.LabelFrame(parent, text="Progress", padding="10")
+        prog.pack(fill=tk.X, pady=(0,10))
         
-        # Connection test button
-        ttk.Button(
-            baud_row,
-            text="Test Connection",
-            command=self.test_connection,
-            width=15
-        ).pack(side=tk.LEFT, padx=(10, 0))
+        self.prog_status_var = tk.StringVar(value="Ready")
+        ttk.Label(prog, textvariable=self.prog_status_var, font=('Segoe UI', 10, 'bold')).pack(anchor=tk.W)
         
-    def _create_firmware_frame(self, parent):
-        """Create firmware file selection"""
-        fw_frame = ttk.LabelFrame(parent, text="Firmware File", padding="10")
-        fw_frame.pack(fill=tk.X, pady=(0, 10))
-        
-        # File selection row
-        file_row = ttk.Frame(fw_frame)
-        file_row.pack(fill=tk.X, pady=2)
-        
-        self.fw_path_var = tk.StringVar(value="No file selected")
-        ttk.Label(
-            file_row, 
-            textvariable=self.fw_path_var,
-            font=('Consolas', 9),
-            foreground='gray'
-        ).pack(side=tk.LEFT, fill=tk.X, expand=True)
-        
-        ttk.Button(
-            file_row,
-            text="Browse...",
-            command=self.browse_firmware,
-            width=12
-        ).pack(side=tk.RIGHT, padx=(5, 0))
-        
-        # File info
-        self.fw_info_var = tk.StringVar(value="")
-        ttk.Label(
-            fw_frame,
-            textvariable=self.fw_info_var,
-            font=('Segoe UI', 8),
-            foreground='blue'
-        ).pack(anchor=tk.W, pady=(5, 0))
-        
-        # Supported formats info
-        ttk.Label(
-            fw_frame,
-            text="Supported: .bin, .hex, .elf, .fw (Snapmaker U1 Extended firmware)",
-            font=('Segoe UI', 8),
-            foreground='gray'
-        ).pack(anchor=tk.W, pady=(5, 0))
-        
-    def _create_progress_frame(self, parent):
-        """Create progress bar section"""
-        prog_frame = ttk.Frame(parent)
-        prog_frame.pack(fill=tk.X, pady=(0, 10))
-        
-        # Progress label
-        self.status_var = tk.StringVar(value="Ready")
-        ttk.Label(
-            prog_frame,
-            textvariable=self.status_var,
-            font=('Segoe UI', 9, 'bold')
-        ).pack(anchor=tk.W)
-        
-        # Progress bar
         self.progress_var = tk.DoubleVar(value=0)
-        self.progress_bar = ttk.Progressbar(
-            prog_frame,
-            variable=self.progress_var,
-            maximum=100,
-            mode='determinate',
-            length=400
-        )
-        self.progress_bar.pack(fill=tk.X, pady=(5, 0))
+        self.progress_bar = ttk.Progressbar(prog, variable=self.progress_var, maximum=100)
+        self.progress_bar.pack(fill=tk.X, pady=(10,0))
         
-        # Progress details
-        self.progress_detail_var = tk.StringVar(value="")
-        ttk.Label(
-            prog_frame,
-            textvariable=self.progress_detail_var,
-            font=('Consolas', 8),
-            foreground='gray'
-        ).pack(anchor=tk.W, pady=(2, 0))
-        
-    def _create_log_frame(self, parent):
-        """Create log output area"""
+        self.prog_detail_var = tk.StringVar(value="")
+        ttk.Label(prog, textvariable=self.prog_detail_var, 
+                 font=('Consolas', 9), foreground='gray').pack(anchor=tk.W, pady=(5,0))
+    
+    def _create_log_section(self, parent):
         log_frame = ttk.LabelFrame(parent, text="Activity Log", padding="5")
-        log_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
+        log_frame.pack(fill=tk.BOTH, expand=True, pady=(0,10))
         
-        # Log text area with scrollbar
-        log_container = ttk.Frame(log_frame)
-        log_container.pack(fill=tk.BOTH, expand=True)
+        container = ttk.Frame(log_frame)
+        container.pack(fill=tk.BOTH, expand=True)
         
-        scrollbar = ttk.Scrollbar(log_container)
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        scroll = ttk.Scrollbar(container)
+        scroll.pack(side=tk.RIGHT, fill=tk.Y)
         
-        self.log_text = tk.Text(
-            log_container,
-            height=10,
-            wrap=tk.WORD,
-            font=('Consolas', 9),
-            yscrollcommand=scrollbar.set,
-            state=tk.DISABLED
-        )
+        self.log_text = tk.Text(container, height=12, wrap=tk.WORD, 
+                               font=('Consolas', 9), yscrollcommand=scroll.set, state=tk.DISABLED)
         self.log_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        scrollbar.config(command=self.log_text.yview)
+        scroll.config(command=self.log_text.yview)
+    
+    def _create_buttons(self, parent):
+        btns = ttk.Frame(parent)
+        btns.pack(fill=tk.X)
         
-    def _create_button_frame(self, parent):
-        """Create action buttons"""
-        btn_frame = ttk.Frame(parent)
-        btn_frame.pack(fill=tk.X)
+        left = ttk.Frame(btns)
+        left.pack(side=tk.LEFT)
+        ttk.Button(left, text="❓ Help", command=self.show_help, width=10).pack(side=tk.LEFT, padx=(0,5))
+        ttk.Button(left, text="ℹ️ About", command=self.show_about, width=10).pack(side=tk.LEFT)
         
-        # Left side - Help and Info
-        left_btns = ttk.Frame(btn_frame)
-        left_btns.pack(side=tk.LEFT)
-        
-        ttk.Button(
-            left_btns,
-            text="❓ Help",
-            command=self.show_help,
-            width=10
-        ).pack(side=tk.LEFT, padx=(0, 5))
-        
-        ttk.Button(
-            left_btns,
-            text="ℹ️ About",
-            command=self.show_about,
-            width=10
-        ).pack(side=tk.LEFT)
-        
-        # Right side - Flash and Cancel
-        right_btns = ttk.Frame(btn_frame)
-        right_btns.pack(side=tk.RIGHT)
-        
-        self.flash_btn = ttk.Button(
-            right_btns,
-            text="⚡ Flash Firmware",
-            command=self.start_flash,
-            width=18
-        )
-        self.flash_btn.pack(side=tk.LEFT, padx=(0, 5))
-        
-        self.cancel_btn = ttk.Button(
-            right_btns,
-            text="⏹ Cancel",
-            command=self.cancel_flash,
-            state=tk.DISABLED,
-            width=12
-        )
+        right = ttk.Frame(btns)
+        right.pack(side=tk.RIGHT)
+        self.flash_btn = ttk.Button(right, text="⚡ Flash Firmware", command=self.start_flash, width=18)
+        self.flash_btn.pack(side=tk.LEFT, padx=(0,5))
+        self.cancel_btn = ttk.Button(right, text="⏹ Cancel", command=self.cancel_flash, state=tk.DISABLED, width=12)
         self.cancel_btn.pack(side=tk.LEFT)
-        
+    
+    def _fmt_size(self, path):
+        if not path: return "0 B"
+        try:
+            sz = os.path.getsize(path)
+            for u in ['B','KB','MB']:
+                if sz < 1024: return f"{sz:.1f} {u}"
+                sz /= 1024
+            return f"{sz:.1f} GB"
+        except: return "?"
+    
     def refresh_ports(self):
-        """Refresh available serial ports"""
         ports = serial.tools.list_ports.comports()
-        port_list = []
+        plist = [f"{p.device} - {p.description}" for p in ports]
         
-        for port in ports:
-            # Format: "COM3 - USB Serial Device" or "/dev/ttyUSB0 - FT232R"
-            port_desc = f"{port.device} - {port.description}"
-            port_list.append(port_desc)
-            
-        if port_list:
-            self.port_combo['values'] = port_list
-            # Try to auto-select common printer ports
-            for i, p in enumerate(port_list):
-                if any(x in p.lower() for x in ['usb', 'serial', 'ch340', 'ftdi', 'cp210']):
+        if plist:
+            self.port_combo['values'] = plist
+            for i, p in enumerate(plist):
+                if any(x in p.lower() for x in ['usb','serial','ch340','ftdi','cp210']):
                     self.port_combo.current(i)
                     break
             else:
                 self.port_combo.current(0)
-            self._log(f"Found {len(port_list)} serial ports")
+            self._log(f"Found {len(plist)} ports")
         else:
             self.port_combo['values'] = ['No ports found']
             self.port_combo.current(0)
             self._log("No serial ports found", "warning")
-            
-    def get_selected_port(self):
-        """Extract port name from selection"""
-        selection = self.port_var.get()
-        if selection and ' - ' in selection:
-            return selection.split(' - ')[0]
-        return selection
+    
+    def get_port(self):
+        sel = self.port_var.get()
+        return sel.split(' - ')[0] if ' - ' in sel else sel
+    
+    def check_firmware_update(self):
+        self._log("Checking GitHub for firmware updates...")
+        self.latest_var.set("Checking...")
+        self.update_btn.config(state=tk.DISABLED)
         
-    def browse_firmware(self):
-        """Open file dialog to select firmware"""
-        filetypes = [
-            ('Firmware files', '*.bin *.hex *.elf *.fw'),
-            ('Binary files', '*.bin'),
-            ('Hex files', '*.hex'),
-            ('All files', '*.*')
-        ]
-        
-        path = filedialog.askopenfilename(
-            title="Select Firmware File",
-            filetypes=filetypes
-        )
-        
-        if path:
-            self.firmware_path = path
-            self.fw_path_var.set(path)
-            
-            # Get file info
+        def check():
             try:
-                size = os.path.getsize(path)
-                size_str = self._format_size(size)
+                req = urllib.request.Request(self.GITHUB_RELEASES,
+                    headers={'User-Agent': self.APP_NAME, 'Accept': 'application/vnd.github.v3+json'})
                 
-                # Calculate MD5 hash
-                with open(path, 'rb') as f:
-                    md5_hash = hashlib.md5(f.read(8192)).hexdigest()[:16]
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    data = json.loads(resp.read().decode())
                 
-                self.fw_info_var.set(f"Size: {size_str} | MD5: {md5_hash}...")
-                self._log(f"Selected firmware: {os.path.basename(path)} ({size_str})")
+                self.latest_firmware_version = data.get('tag_name', 'unknown')
+                self.latest_firmware_url = None
+                
+                # Find firmware asset
+                for asset in data.get('assets', []):
+                    name = asset.get('name', '').lower()
+                    if any(ext in name for ext in ['.bin','.hex','.fw','firmware']):
+                        self.latest_firmware_url = asset.get('browser_download_url')
+                        break
+                
+                # Check release notes for firmware link
+                if not self.latest_firmware_url:
+                    body = data.get('body', '')
+                    m = re.search(r'https?://[^\s<>"]+\.(?:bin|hex|fw)', body)
+                    if m: self.latest_firmware_url = m.group(0)
+                
+                self.root.after(0, self._update_fw_status)
+                
+            except urllib.error.HTTPError as e:
+                msg = "No releases" if e.code == 404 else f"HTTP {e.code}"
+                self.root.after(0, lambda: self._check_failed(msg))
             except Exception as e:
-                self.fw_info_var.set(f"Error reading file: {e}")
-                
-    def _format_size(self, size_bytes):
-        """Format bytes to human readable"""
-        for unit in ['B', 'KB', 'MB', 'GB']:
-            if size_bytes < 1024:
-                return f"{size_bytes:.1f} {unit}"
-            size_bytes /= 1024
-        return f"{size_bytes:.1f} TB"
+                self.root.after(0, lambda: self._check_failed(str(e)[:40]))
         
-    def test_connection(self):
-        """Test connection to printer"""
-        port = self.get_selected_port()
-        if not port or port == 'No ports found':
-            messagebox.showerror("Error", "Please select a valid serial port")
+        threading.Thread(target=check, daemon=True).start()
+    
+    def _check_failed(self, msg):
+        self.latest_var.set("Error")
+        self.status_var.set(f"❌ {msg}")
+        self.status_lbl.config(foreground='red')
+        self._log(f"Update check failed: {msg}", "error")
+    
+    def _update_fw_status(self):
+        self.latest_var.set(self.latest_firmware_version or "N/A")
+        
+        bundled = (self.bundled_firmware_version or "0").lstrip('vV')
+        latest = (self.latest_firmware_version or "0").lstrip('vV')
+        
+        try:
+            b_parts = [int(x) for x in bundled.split('.') if x.isdigit()]
+            l_parts = [int(x) for x in latest.split('.') if x.isdigit()]
+            needs = any(l > b for l, b in zip(l_parts, b_parts))
+        except:
+            needs = latest != bundled and latest != "0"
+        
+        self.needs_update = needs
+        
+        if needs and self.latest_firmware_url:
+            self.status_var.set(f"⚠️ Update: v{bundled} → v{latest}")
+            self.status_lbl.config(foreground='red')
+            self.update_btn.config(state=tk.NORMAL)
+            self._log(f"Update available: v{bundled} → v{latest}", "warning")
+        else:
+            self.status_var.set("✅ Up to date")
+            self.status_lbl.config(foreground='green')
+            self.update_btn.config(state=tk.DISABLED)
+            self._log("Firmware is current")
+    
+    def download_latest(self):
+        if not self.latest_firmware_url:
+            messagebox.showerror("Error", "No download URL")
             return
-            
-        baud = int(self.baud_var.get())
         
-        self._log(f"Testing connection to {port} @ {baud} baud...")
-        self.status_var.set("Testing connection...")
+        self._log("Downloading latest firmware...")
+        self.update_btn.config(state=tk.DISABLED)
+        self.prog_status_var.set("Downloading...")
+        
+        def download():
+            try:
+                fw_dir = Path.home() / ".snapmaker_u1"
+                fw_dir.mkdir(exist_ok=True)
+                
+                ext = '.bin'
+                if '.hex' in self.latest_firmware_url.lower(): ext = '.hex'
+                elif '.fw' in self.latest_firmware_url.lower(): ext = '.fw'
+                
+                local = fw_dir / f"firmware_{self.latest_firmware_version}{ext}"
+                
+                req = urllib.request.Request(self.latest_firmware_url, 
+                                            headers={'User-Agent': self.APP_NAME})
+                with urllib.request.urlopen(req, timeout=120) as resp:
+                    with open(local, 'wb') as f:
+                        f.write(resp.read())
+                
+                self.bundled_firmware_path = str(local)
+                self.bundled_firmware_version = self.latest_firmware_version
+                
+                self.root.after(0, lambda: self._dl_complete(local))
+            except Exception as e:
+                self.root.after(0, lambda: self._dl_failed(str(e)))
+        
+        threading.Thread(target=download, daemon=True).start()
+    
+    def _dl_complete(self, path):
+        self.bundled_var.set(f"{self.bundled_firmware_version} ({self._fmt_size(path)})")
+        self.status_var.set("✅ Downloaded")
+        self.status_lbl.config(foreground='green')
+        self._log(f"Downloaded: {path}", "success")
+        messagebox.showinfo("Success", f"Firmware downloaded!\nVersion: {self.bundled_firmware_version}\nReady to flash!")
+        self.prog_status_var.set("Ready")
+    
+    def _dl_failed(self, err):
+        self.update_btn.config(state=tk.NORMAL)
+        self.status_var.set("❌ Download failed")
+        self.status_lbl.config(foreground='red')
+        self._log(f"Download failed: {err}", "error")
+        messagebox.showerror("Download Failed", err)
+        self.prog_status_var.set("Ready")
+    
+    def test_connection(self):
+        port = self.get_port()
+        if not port or port == 'No ports found':
+            messagebox.showerror("Error", "Select a port")
+            return
+        
+        baud = int(self.baud_var.get())
+        self._log(f"Testing {port} @ {baud}...")
+        self.prog_status_var.set("Testing...")
         
         try:
             ser = serial.Serial(port, baud, timeout=2)
-            ser.write(b'\nM115\n')  # Get firmware info
+            ser.write(b'\nM115\n')
             time.sleep(0.5)
-            response = ser.read(ser.in_waiting or 100).decode('utf-8', errors='ignore')
+            resp = ser.read(ser.in_waiting or 100).decode('utf-8', errors='ignore')
             ser.close()
             
-            if 'FIRMWARE_NAME' in response or 'ok' in response:
-                self._log("✅ Connection successful! Printer detected.", "success")
-                messagebox.showinfo("Success", "Printer connection test successful!")
-                self.status_var.set("Printer connected")
+            if 'FIRMWARE_NAME' in resp or 'ok' in resp.lower():
+                self._log("✅ Connection OK", "success")
+                messagebox.showinfo("Success", "Printer detected!")
+                self.prog_status_var.set("Connected")
             else:
-                self._log("⚠️ Port opened but no printer response", "warning")
-                messagebox.showwarning("Warning", "Port opened but printer did not respond. Check baud rate.")
-                self.status_var.set("No response from printer")
-                
-        except serial.SerialException as e:
-            self._log(f"❌ Connection failed: {e}", "error")
-            messagebox.showerror("Connection Failed", str(e))
-            self.status_var.set("Connection failed")
-            
+                self._log("⚠️ Unclear response", "warning")
+                messagebox.showwarning("Warning", "Port opened but response unclear")
+                self.prog_status_var.set("Unclear")
+        except Exception as e:
+            self._log(f"❌ Failed: {e}", "error")
+            messagebox.showerror("Failed", str(e))
+            self.prog_status_var.set("Failed")
+    
     def start_flash(self):
-        """Start firmware flashing process"""
-        # Validate inputs
-        port = self.get_selected_port()
+        port = self.get_port()
         if not port or port == 'No ports found':
-            messagebox.showerror("Error", "Please select a serial port")
+            messagebox.showerror("Error", "Select a port")
             return
+        
+        source = self.source_var.get()
+        
+        if source == "bundled":
+            if not self.bundled_firmware_path or not os.path.exists(self.bundled_firmware_path):
+                messagebox.showerror("Error", "No bundled firmware. Download or browse.")
+                return
+            fw_path = self.bundled_firmware_path
+            fw_ver = self.bundled_firmware_version
             
-        if not self.firmware_path or not os.path.exists(self.firmware_path):
-            messagebox.showerror("Error", "Please select a firmware file")
+        elif source == "download":
+            if self.needs_update or not self.bundled_firmware_path:
+                self._download_and_flash(port)
+                return
+            else:
+                messagebox.showinfo("Info", "Already latest. Using bundled.")
+                fw_path = self.bundled_firmware_path
+                fw_ver = self.bundled_firmware_version
+                
+        elif source == "browse":
+            fw_path = filedialog.askopenfilename(
+                title="Select Firmware",
+                filetypes=[('Firmware', '*.bin *.hex *.elf *.fw'), ('All', '*.*')]
+            )
+            if not fw_path: return
+            fw_ver = self._extract_version(Path(fw_path))
+        else:
             return
-            
-        # Confirm flash
-        if not messagebox.askyesno(
-            "Confirm Flash",
-            "⚠️ WARNING: Flashing firmware can brick your printer if interrupted.\n\n"
-            "Ensure:\n"
-            "• Printer is powered and connected\n"
-            "• USB cable is secure\n"
-            "• Do not disconnect during flash\n\n"
-            "Start flashing?"
-        ):
+        
+        if not messagebox.askyesno("Confirm Flash", 
+            f"⚠️ Flash firmware {fw_ver}?\n\nPort: {port}\nBaud: {self.baud_var.get()}\n\n"
+            "WARNING: Do not interrupt!\n\nStart?"):
             return
-            
-        # Update UI
+        
+        self._run_flash(fw_path, port)
+    
+    def _download_and_flash(self, port):
+        self._log("Downloading then flashing...")
+        self.flash_btn.config(state=tk.DISABLED)
+        
+        def dl_then_flash():
+            try:
+                fw_dir = Path.home() / ".snapmaker_u1"
+                fw_dir.mkdir(exist_ok=True)
+                ext = '.hex' if '.hex' in self.latest_firmware_url.lower() else '.bin'
+                local = fw_dir / f"firmware_{self.latest_firmware_version}{ext}"
+                
+                req = urllib.request.Request(self.latest_firmware_url, headers={'User-Agent': self.APP_NAME})
+                with urllib.request.urlopen(req, timeout=120) as resp:
+                    with open(local, 'wb') as f:
+                        f.write(resp.read())
+                
+                self.bundled_firmware_path = str(local)
+                self.bundled_firmware_version = self.latest_firmware_version
+                self.root.after(0, lambda: self._run_flash(local, port))
+            except Exception as e:
+                self.root.after(0, lambda: self._dl_flash_failed(str(e)))
+        
+        threading.Thread(target=dl_then_flash, daemon=True).start()
+    
+    def _dl_flash_failed(self, err):
+        self.flash_btn.config(state=tk.NORMAL)
+        self._log(f"Download failed: {err}", "error")
+        messagebox.showerror("Failed", f"Download failed:\n{err}")
+        self.prog_status_var.set("Failed")
+    
+    def _run_flash(self, fw_path, port):
         self.is_flashing = True
         self.cancel_requested = False
         self.flash_btn.config(state=tk.DISABLED)
         self.cancel_btn.config(state=tk.NORMAL)
         self.progress_var.set(0)
-        self.status_var.set("Flashing firmware...")
+        self.prog_status_var.set("Flashing...")
         
-        # Clear log
         self.log_text.config(state=tk.NORMAL)
         self.log_text.delete(1.0, tk.END)
         self.log_text.config(state=tk.DISABLED)
         
-        # Start flashing in thread
-        thread = threading.Thread(target=self._flash_thread, args=(port,))
-        thread.daemon = True
-        thread.start()
-        
-    def _flash_thread(self, port):
-        """Firmware flashing thread"""
+        threading.Thread(target=self._flash_thread, args=(fw_path, port), daemon=True).start()
+    
+    def _flash_thread(self, fw_path, port):
         try:
             baud = int(self.baud_var.get())
-            firmware_size = os.path.getsize(self.firmware_path)
+            fw_size = os.path.getsize(fw_path)
             
-            self._log(f"Opening {port} @ {baud} baud...")
+            self._log(f"Opening {port} @ {baud}...")
             
-            # Open serial connection
-            with serial.Serial(port, baud, timeout=1) as ser:
-                self._log("Connected to printer")
-                self._log("Entering bootloader mode...")
+            ser = serial.Serial(port, baud, timeout=1)
+            self._log("Connected")
+            self._log("Entering bootloader...")
+            
+            ser.write(b'M997\n')
+            time.sleep(2)
+            ser.close()
+            time.sleep(1)
+            
+            try:
+                ser = serial.Serial(port, 115200, timeout=2)
+            except:
+                ser = serial.Serial(port, baud, timeout=2)
+            
+            self._log("Sending firmware...")
+            
+            with open(fw_path, 'rb') as fw:
+                sent = 0
+                chunk_sz = 1024
                 
-                # Send M997 to enter bootloader (Marlin command)
-                ser.write(b'M997\n')
-                time.sleep(2)
+                while True:
+                    if self.cancel_requested:
+                        self._log("Cancelled", "warning")
+                        break
+                    
+                    chunk = fw.read(chunk_sz)
+                    if not chunk: break
+                    
+                    ser.write(chunk)
+                    sent += len(chunk)
+                    
+                    prog = (sent / fw_size) * 100
+                    self.progress_var.set(prog)
+                    self.prog_detail_var.set(f"{self._fmt_size(sent)} / {self._fmt_size(fw_size)}")
+                    
+                    time.sleep(0.01)
+                    if ser.in_waiting:
+                        resp = ser.read(ser.in_waiting)
+                        if b'error' in resp.lower():
+                            raise Exception(f"Printer error: {resp.decode('utf-8', errors='ignore')}")
+            
+            if not self.cancel_requested:
+                self._log("Verifying...")
+                time.sleep(3)
+                ser.write(b'M115\n')
+                time.sleep(1)
+                resp = ser.read(ser.in_waiting or 100)
                 
-                # Open firmware file
-                with open(self.firmware_path, 'rb') as fw:
-                    bytes_sent = 0
-                    chunk_size = 1024
-                    
-                    while True:
-                        if self.cancel_requested:
-                            self._log("Flash cancelled by user", "warning")
-                            break
-                            
-                        chunk = fw.read(chunk_size)
-                        if not chunk:
-                            break
-                            
-                        # Write chunk to printer
-                        ser.write(chunk)
-                        bytes_sent += len(chunk)
-                        
-                        # Update progress
-                        progress = (bytes_sent / firmware_size) * 100
-                        self.progress_var.set(progress)
-                        self.progress_detail_var.set(
-                            f"Sent: {self._format_size(bytes_sent)} / {self._format_size(firmware_size)}"
-                        )
-                        
-                        # Read response
-                        time.sleep(0.01)
-                        if ser.in_waiting:
-                            response = ser.read(ser.in_waiting)
-                            if b'error' in response.lower():
-                                raise Exception(f"Printer error: {response.decode('utf-8', errors='ignore')}")
-                                
-                if not self.cancel_requested:
-                    self._log("Waiting for flash to complete...")
-                    time.sleep(3)
-                    
-                    # Verify
-                    ser.write(b'M115\n')
-                    time.sleep(1)
-                    response = ser.read(ser.in_waiting or 100)
-                    
-                    if response:
-                        self._log("✅ Firmware flash successful!", "success")
-                        self.status_var.set("Flash complete")
-                        messagebox.showinfo("Success", "Firmware flashed successfully!\n\nPlease power cycle your printer.")
-                    else:
-                        self._log("⚠️ Flash may have succeeded but no verification response", "warning")
-                        messagebox.showwarning("Warning", "Flash completed but could not verify. Please check printer.")
-                        
+                if resp:
+                    self._log("✅ Flash successful!", "success")
+                    self.prog_status_var.set("Complete")
+                    messagebox.showinfo("Success", "Firmware flashed!\n\nPower cycle your printer.")
+                else:
+                    self._log("⚠️ Flash complete (no verify)", "warning")
+                    messagebox.showwarning("Warning", "Completed but verification unclear")
+            
+            ser.close()
+            
         except Exception as e:
             self._log(f"❌ Flash failed: {e}", "error")
-            self.status_var.set("Flash failed")
-            messagebox.showerror("Flash Failed", str(e))
+            self.prog_status_var.set("Failed")
+            messagebox.showerror("Failed", str(e))
         finally:
             self.is_flashing = False
             self.flash_btn.config(state=tk.NORMAL)
             self.cancel_btn.config(state=tk.DISABLED)
             if not self.cancel_requested:
                 self.progress_var.set(100)
-                
+    
     def cancel_flash(self):
-        """Cancel flashing"""
         if self.is_flashing:
             self.cancel_requested = True
-            self._log("Cancelling flash...")
-            self.status_var.set("Cancelling...")
-            
-    def _log(self, message, level="info"):
-        """Add message to log"""
-        timestamp = time.strftime("%H:%M:%S")
-        
-        # Color codes
-        colors = {
-            "info": "black",
-            "success": "green",
-            "warning": "orange",
-            "error": "red"
-        }
-        
+            self._log("Cancelling...")
+            self.prog_status_var.set("Cancelling...")
+    
+    def _log(self, msg, level="info"):
+        ts = time.strftime("%H:%M:%S")
         self.log_text.config(state=tk.NORMAL)
-        self.log_text.insert(tk.END, f"[{timestamp}] ")
+        self.log_text.insert(tk.END, f"[{ts}] ")
         
-        start_idx = self.log_text.index("end-1c linestart")
-        self.log_text.insert(tk.END, f"{message}\n")
-        end_idx = self.log_text.index("end-1c")
+        start = self.log_text.index("end-1c linestart")
+        self.log_text.insert(tk.END, f"{msg}\n")
+        end = self.log_text.index("end-1c")
         
-        # Apply color tag
-        tag_name = f"color_{level}"
-        if tag_name not in self.log_text.tag_names():
-            self.log_text.tag_config(tag_name, foreground=colors.get(level, "black"))
+        colors = {"info":"black", "success":"green", "warning":"orange", "error":"red"}
+        tag = f"c_{level}"
+        if tag not in self.log_text.tag_names():
+            self.log_text.tag_config(tag, foreground=colors.get(level,"black"))
         
-        self.log_text.tag_add(tag_name, start_idx, end_idx)
+        self.log_text.tag_add(tag, start, end)
         self.log_text.see(tk.END)
         self.log_text.config(state=tk.DISABLED)
-        
+    
     def show_help(self):
-        """Show help dialog"""
-        help_text = """SNAPMAKER U1 FIRMWARE FLASHER HELP
+        txt = """SNAPMAKER U1 FIRMWARE FLASHER
 
 QUICK START:
-1. Connect your Snapmaker U1 printer via USB
-2. Select the correct serial port (usually shows as USB-SERIAL)
-3. Select the correct baud rate (default: 115200)
-4. Click 'Browse' and select your .bin or .hex firmware file
-5. Click 'Flash Firmware' and wait for completion
+1. Connect printer via USB
+2. Check Firmware Status for updates
+3. Download latest or use bundled
+4. Select port & baud rate
+5. Click Flash Firmware
+6. Wait - do not disconnect!
 
-TROUBLESHOOTING:
-• If no ports appear: Install CH340/CP210x drivers
-• Connection fails: Try different baud rates (250000, 500000)
-• Flash fails: Ensure printer is in bootloader mode
-• Windows: Check Device Manager for COM port number
-• macOS: Port will be /dev/tty.usbserial-* or /dev/cu.usbserial-*
+FIRMWARE SOURCES:
+• Use Bundled - Embedded firmware
+• Download Latest - From GitHub
+• Browse File - Custom firmware
+
+AUTO-UPDATE:
+Checks GitHub on startup for new releases.
 
 SAFETY:
-• Do NOT disconnect USB during flashing
-• Do NOT power off printer during flashing
-• Interrupting flash may brick your printer
+⚠️ Do NOT disconnect during flash
+⚠️ Do NOT power off printer
+⚠️ Interruption may brick device
 
-For more help, visit: https://github.com/paxx12/SnapmakerU1-Extended-Firmware
+GitHub: https://github.com/kbaker827/SnapmakerU1-Extended-Firmware-GUI-Flasher
 """
-        
-        help_window = tk.Toplevel(self.root)
-        help_window.title("Help")
-        help_window.geometry("550x500")
-        
-        text = tk.Text(help_window, wrap=tk.WORD, padx=10, pady=10, font=('Consolas', 10))
-        text.pack(fill=tk.BOTH, expand=True)
-        text.insert(1.0, help_text)
-        text.config(state=tk.DISABLED)
-        
-        ttk.Button(help_window, text="Close", command=help_window.destroy).pack(pady=10)
-        
+        win = tk.Toplevel(self.root)
+        win.title("Help")
+        win.geometry("500x450")
+        txt_widget = tk.Text(win, wrap=tk.WORD, padx=10, pady=10, font=('Consolas',10))
+        txt_widget.pack(fill=tk.BOTH, expand=True)
+        txt_widget.insert(1.0, txt)
+        txt_widget.config(state=tk.DISABLED)
+        ttk.Button(win, text="Close", command=win.destroy).pack(pady=10)
+    
     def show_about(self):
-        """Show about dialog"""
-        about_text = f"""Snapmaker U1 Extended Firmware Flasher
+        about = f"""{self.APP_NAME}
 
 Version: {self.VERSION}
 Platform: {platform.system()} {platform.machine()}
 Python: {platform.python_version()}
 
-A cross-platform tool for flashing firmware to
-Snapmaker U1 3D printers.
+Bundled: {self.bundled_firmware_version or 'None'}
+Latest: {self.latest_firmware_version or 'Unknown'}
 
-GitHub: https://github.com/paxx12/SnapmakerU1-Extended-Firmware
-
-Credits:
-• GUI Framework: Python tkinter
-• Serial Library: pyserial
-• Icons: Unicode emoji
+GitHub: github.com/{self.GITHUB_USER}/{self.GITHUB_REPO}
 
 License: MIT
 """
-        messagebox.showinfo("About", about_text)
-        
+        messagebox.showinfo("About", about)
+    
     def run(self):
-        """Run the application"""
-        self._log("Snapmaker U1 Firmware Flasher started")
-        self._log(f"Platform: {platform.system()} {platform.release()}")
+        self._log(f"{self.APP_NAME} v{self.VERSION} started")
+        self._log(f"Platform: {platform.system()}")
+        if self.bundled_firmware_path:
+            self._log(f"Bundled: {self.bundled_firmware_version}")
         self.root.mainloop()
 
 
-def main():
-    """Main entry point"""
-    # Check for required modules
-    try:
-        import serial
-    except ImportError:
-        print("Error: pyserial is required. Install with: pip install pyserial")
-        sys.exit(1)
-        
+if __name__ == '__main__':
     app = SnapmakerU1Flasher()
     app.run()
-
-
-if __name__ == '__main__':
-    main()
