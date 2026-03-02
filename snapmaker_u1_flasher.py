@@ -15,7 +15,7 @@ from pathlib import Path
 from datetime import datetime
 
 class SnapmakerU1Flasher:
-    VERSION = "2.0.1"
+    VERSION = "2.1.0"
     APP_NAME = "Snapmaker U1 Firmware Flasher"
     
     # GitHub config - Check paxx12's repo for FIRMWARE updates
@@ -45,7 +45,8 @@ class SnapmakerU1Flasher:
         self.bundled_firmware_path = None
         self.bundled_firmware_version = None
         self.latest_firmware_version = None
-        self.latest_firmware_url = None
+        self.base_firmware_url = None
+        self.extended_firmware_url = None
         self.needs_update = False
         self.is_flashing = False
         self.cancel_requested = False
@@ -144,9 +145,15 @@ class SnapmakerU1Flasher:
         self.status_lbl = ttk.Label(row3, textvariable=self.status_var, font=('Segoe UI', 9, 'bold'))
         self.status_lbl.pack(side=tk.LEFT)
         
-        self.update_btn = ttk.Button(row3, text="📥 Download Latest", 
-                                     command=self.download_latest, state=tk.DISABLED)
-        self.update_btn.pack(side=tk.RIGHT)
+        # Download buttons for base and extended
+        self.download_base_btn = ttk.Button(row3, text="📥 Download Base",
+                                            command=self.download_base, state=tk.DISABLED)
+        self.download_base_btn.pack(side=tk.RIGHT)
+        
+        self.download_ext_btn = ttk.Button(row3, text="📥 Download Extended",
+                                           command=self.download_extended, state=tk.DISABLED)
+        self.download_ext_btn.pack(side=tk.RIGHT, padx=(0,5))
+        
         ttk.Button(row3, text="🔄 Check", command=self.check_firmware_update).pack(side=tk.RIGHT, padx=(0,5))
         
         # Source selection
@@ -158,7 +165,6 @@ class SnapmakerU1Flasher:
         self.source_var.trace_add('write', self._on_source_change)
         
         ttk.Radiobutton(row4, text="Use Bundled", variable=self.source_var, value="bundled").pack(side=tk.LEFT, padx=(10,5))
-        ttk.Radiobutton(row4, text="Download Latest", variable=self.source_var, value="download").pack(side=tk.LEFT, padx=(0,5))
         ttk.Radiobutton(row4, text="Browse File", variable=self.source_var, value="browse").pack(side=tk.LEFT)
         
         # Store browsed file path
@@ -238,6 +244,9 @@ class SnapmakerU1Flasher:
         if source == "browse":
             # Open file dialog immediately when Browse is selected
             self._browse_for_firmware()
+        elif source == "bundled":
+            # Clear browsed path when switching back to bundled
+            self.browsed_firmware_path = None
     
     def _browse_for_firmware(self):
         """Open file dialog to browse for firmware"""
@@ -307,20 +316,30 @@ class SnapmakerU1Flasher:
                     data = json.loads(resp.read().decode())
                 
                 self.latest_firmware_version = data.get('tag_name', 'unknown')
-                self.latest_firmware_url = None
+                self.base_firmware_url = None
+                self.extended_firmware_url = None
                 
-                # Find firmware asset
+                # Find firmware assets - look for base and extended
                 for asset in data.get('assets', []):
                     name = asset.get('name', '').lower()
-                    if any(ext in name for ext in ['.bin','.hex','.fw','firmware']):
-                        self.latest_firmware_url = asset.get('browser_download_url')
-                        break
+                    url = asset.get('browser_download_url')
+                    if 'basic' in name or 'base' in name:
+                        self.base_firmware_url = url
+                    elif 'extended' in name:
+                        self.extended_firmware_url = url
                 
-                # Check release notes for firmware link
-                if not self.latest_firmware_url:
-                    body = data.get('body', '')
-                    m = re.search(r'https?://[^\s<>"]+\.(?:bin|hex|fw)', body)
-                    if m: self.latest_firmware_url = m.group(0)
+                # Also check release notes for firmware links
+                body = data.get('body', '')
+                if not self.base_firmware_url or not self.extended_firmware_url:
+                    links = re.findall(r'https?://[^\s<>"]+\.(?:bin|hex|fw)', body)
+                    for link in links:
+                        link_lower = link.lower()
+                        if 'basic' in link_lower or 'base' in link_lower:
+                            if not self.base_firmware_url:
+                                self.base_firmware_url = link
+                        elif 'extended' in link_lower:
+                            if not self.extended_firmware_url:
+                                self.extended_firmware_url = link
                 
                 self.root.after(0, self._update_fw_status)
                 
@@ -353,25 +372,45 @@ class SnapmakerU1Flasher:
         
         self.needs_update = needs
         
-        if needs and self.latest_firmware_url:
+        # Enable download buttons based on availability
+        if self.base_firmware_url:
+            self.download_base_btn.config(state=tk.NORMAL)
+        else:
+            self.download_base_btn.config(state=tk.DISABLED)
+            
+        if self.extended_firmware_url:
+            self.download_ext_btn.config(state=tk.NORMAL)
+        else:
+            self.download_ext_btn.config(state=tk.DISABLED)
+        
+        if needs:
             self.status_var.set(f"⚠️ Update: v{bundled} → v{latest}")
             self.status_lbl.config(foreground='red')
-            self.update_btn.config(state=tk.NORMAL)
             self._log(f"Update available: v{bundled} → v{latest}", "warning")
         else:
             self.status_var.set("✅ Up to date")
             self.status_lbl.config(foreground='green')
-            self.update_btn.config(state=tk.DISABLED)
             self._log("Firmware is current")
     
-    def download_latest(self):
-        if not self.latest_firmware_url:
-            messagebox.showerror("Error", "No download URL")
+    def download_base(self):
+        """Download base firmware with progress tracking"""
+        self._download_firmware(self.base_firmware_url, "Base")
+    
+    def download_extended(self):
+        """Download extended firmware with progress tracking"""
+        self._download_firmware(self.extended_firmware_url, "Extended")
+    
+    def _download_firmware(self, url, variant):
+        """Download firmware with progress bar updates"""
+        if not url:
+            messagebox.showerror("Error", f"No download URL for {variant}")
             return
         
-        self._log("Downloading latest firmware...")
-        self.update_btn.config(state=tk.DISABLED)
-        self.prog_status_var.set("Downloading...")
+        self._log(f"Downloading {variant} firmware...")
+        self.download_base_btn.config(state=tk.DISABLED)
+        self.download_ext_btn.config(state=tk.DISABLED)
+        self.prog_status_var.set(f"Downloading {variant}...")
+        self.progress_var.set(0)
         
         def download():
             try:
@@ -379,36 +418,61 @@ class SnapmakerU1Flasher:
                 fw_dir.mkdir(exist_ok=True)
                 
                 ext = '.bin'
-                if '.hex' in self.latest_firmware_url.lower(): ext = '.hex'
-                elif '.fw' in self.latest_firmware_url.lower(): ext = '.fw'
+                if '.hex' in url.lower(): ext = '.hex'
+                elif '.fw' in url.lower(): ext = '.fw'
                 
-                local = fw_dir / f"firmware_{self.latest_firmware_version}{ext}"
+                local = fw_dir / f"firmware_{variant.lower()}_{self.latest_firmware_version}{ext}"
                 
-                req = urllib.request.Request(self.latest_firmware_url, 
-                                            headers={'User-Agent': self.APP_NAME})
+                req = urllib.request.Request(url, headers={'User-Agent': self.APP_NAME})
                 with urllib.request.urlopen(req, timeout=120) as resp:
+                    total_size = int(resp.headers.get('content-length', 0))
+                    downloaded = 0
+                    chunk_size = 8192
+                    
                     with open(local, 'wb') as f:
-                        f.write(resp.read())
+                        while True:
+                            chunk = resp.read(chunk_size)
+                            if not chunk:
+                                break
+                            f.write(chunk)
+                            downloaded += len(chunk)
+                            
+                            # Update progress bar
+                            if total_size > 0:
+                                progress = (downloaded / total_size) * 100
+                                self.root.after(0, lambda p=progress: self.progress_var.set(p))
+                                self.root.after(0, lambda d=downloaded, t=total_size: 
+                                    self.prog_detail_var.set(f"{self._fmt_size_bytes(d)} / {self._fmt_size_bytes(t)}"))
                 
                 self.bundled_firmware_path = str(local)
                 self.bundled_firmware_version = self.latest_firmware_version
                 
-                self.root.after(0, lambda: self._dl_complete(local))
+                self.root.after(0, lambda: self._dl_complete(local, variant))
             except Exception as e:
                 self.root.after(0, lambda: self._dl_failed(str(e)))
         
         threading.Thread(target=download, daemon=True).start()
     
-    def _dl_complete(self, path):
+    def _fmt_size_bytes(self, size):
+        """Format byte size for display"""
+        for unit in ['B', 'KB', 'MB', 'GB']:
+            if size < 1024:
+                return f"{size:.1f} {unit}"
+            size /= 1024
+        return f"{size:.1f} TB"
+    
+    def _dl_complete(self, path, variant):
         self.bundled_var.set(f"{self.bundled_firmware_version} ({self._fmt_size(path)})")
-        self.status_var.set("✅ Downloaded")
+        self.status_var.set(f"✅ {variant} Downloaded")
         self.status_lbl.config(foreground='green')
-        self._log(f"Downloaded: {path}", "success")
-        messagebox.showinfo("Success", f"Firmware downloaded!\nVersion: {self.bundled_firmware_version}\nReady to flash!")
+        self._log(f"{variant} firmware downloaded: {path}", "success")
+        messagebox.showinfo("Success", f"{variant} firmware downloaded!\nVersion: {self.bundled_firmware_version}\nReady to flash!")
         self.prog_status_var.set("Ready")
+        self.progress_var.set(100)
     
     def _dl_failed(self, err):
-        self.update_btn.config(state=tk.NORMAL)
+        self.download_base_btn.config(state=tk.NORMAL if self.base_firmware_url else tk.DISABLED)
+        self.download_ext_btn.config(state=tk.NORMAL if self.extended_firmware_url else tk.DISABLED)
         self.status_var.set("❌ Download failed")
         self.status_lbl.config(foreground='red')
         self._log(f"Download failed: {err}", "error")
@@ -459,15 +523,6 @@ class SnapmakerU1Flasher:
                 return
             fw_path = self.bundled_firmware_path
             fw_ver = self.bundled_firmware_version
-            
-        elif source == "download":
-            if self.needs_update or not self.bundled_firmware_path:
-                self._download_and_flash(port)
-                return
-            else:
-                messagebox.showinfo("Info", "Already latest. Using bundled.")
-                fw_path = self.bundled_firmware_path
-                fw_ver = self.bundled_firmware_version
                 
         elif source == "browse":
             if not self.browsed_firmware_path or not os.path.exists(self.browsed_firmware_path):
@@ -486,36 +541,6 @@ class SnapmakerU1Flasher:
             return
         
         self._run_flash(fw_path, port)
-    
-    def _download_and_flash(self, port):
-        self._log("Downloading then flashing...")
-        self.flash_btn.config(state=tk.DISABLED)
-        
-        def dl_then_flash():
-            try:
-                fw_dir = Path.home() / ".snapmaker_u1"
-                fw_dir.mkdir(exist_ok=True)
-                ext = '.hex' if '.hex' in self.latest_firmware_url.lower() else '.bin'
-                local = fw_dir / f"firmware_{self.latest_firmware_version}{ext}"
-                
-                req = urllib.request.Request(self.latest_firmware_url, headers={'User-Agent': self.APP_NAME})
-                with urllib.request.urlopen(req, timeout=120) as resp:
-                    with open(local, 'wb') as f:
-                        f.write(resp.read())
-                
-                self.bundled_firmware_path = str(local)
-                self.bundled_firmware_version = self.latest_firmware_version
-                self.root.after(0, lambda: self._run_flash(local, port))
-            except Exception as e:
-                self.root.after(0, lambda: self._dl_flash_failed(str(e)))
-        
-        threading.Thread(target=dl_then_flash, daemon=True).start()
-    
-    def _dl_flash_failed(self, err):
-        self.flash_btn.config(state=tk.NORMAL)
-        self._log(f"Download failed: {err}", "error")
-        messagebox.showerror("Failed", f"Download failed:\n{err}")
-        self.prog_status_var.set("Failed")
     
     def _run_flash(self, fw_path, port):
         self.is_flashing = True
