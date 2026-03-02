@@ -15,7 +15,7 @@ from pathlib import Path
 from datetime import datetime
 
 class SnapmakerU1Flasher:
-    VERSION = "1.1.0"
+    VERSION = "2.0.0"
     APP_NAME = "Snapmaker U1 Firmware Flasher"
     
     # GitHub config - now points to renamed repo
