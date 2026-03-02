@@ -15,7 +15,7 @@ from pathlib import Path
 from datetime import datetime
 
 class SnapmakerU1Flasher:
-    VERSION = "2.1.0"
+    VERSION = "2.1.1"
     APP_NAME = "Snapmaker U1 Firmware Flasher"
     
     # GitHub config - Check paxx12's repo for FIRMWARE updates
@@ -31,8 +31,8 @@ class SnapmakerU1Flasher:
     def __init__(self):
         self.root = tk.Tk()
         self.root.title(f"{self.APP_NAME} v{self.VERSION}")
-        self.root.geometry("750x650")
-        self.root.minsize(700, 600)
+        self.root.geometry("800x750")
+        self.root.minsize(750, 700)
         
         # Windows DPI awareness
         if sys.platform == 'win32':
@@ -305,14 +305,20 @@ class SnapmakerU1Flasher:
     def check_firmware_update(self):
         self._log("Checking GitHub for firmware updates...")
         self.latest_var.set("Checking...")
-        self.update_btn.config(state=tk.DISABLED)
+        self.download_base_btn.config(state=tk.DISABLED)
+        self.download_ext_btn.config(state=tk.DISABLED)
+        
+        # Set socket timeout for this operation
+        import socket
+        old_timeout = socket.getdefaulttimeout()
+        socket.setdefaulttimeout(15)
         
         def check():
             try:
                 req = urllib.request.Request(self.GITHUB_RELEASES,
                     headers={'User-Agent': self.APP_NAME, 'Accept': 'application/vnd.github.v3+json'})
                 
-                with urllib.request.urlopen(req, timeout=10) as resp:
+                with urllib.request.urlopen(req, timeout=12) as resp:
                     data = json.loads(resp.read().decode())
                 
                 self.latest_firmware_version = data.get('tag_name', 'unknown')
@@ -348,6 +354,9 @@ class SnapmakerU1Flasher:
                 self.root.after(0, lambda: self._check_failed(msg))
             except Exception as e:
                 self.root.after(0, lambda: self._check_failed(str(e)[:40]))
+            finally:
+                # Reset socket timeout
+                socket.setdefaulttimeout(old_timeout)
         
         threading.Thread(target=check, daemon=True).start()
     
@@ -356,6 +365,11 @@ class SnapmakerU1Flasher:
         self.status_var.set(f"❌ {msg}")
         self.status_lbl.config(foreground='red')
         self._log(f"Update check failed: {msg}", "error")
+        # Re-enable buttons if we have URLs cached
+        if self.base_firmware_url:
+            self.download_base_btn.config(state=tk.NORMAL)
+        if self.extended_firmware_url:
+            self.download_ext_btn.config(state=tk.NORMAL)
     
     def _update_fw_status(self):
         self.latest_var.set(self.latest_firmware_version or "N/A")
