@@ -1,21 +1,31 @@
 # Snapmaker U1 Extended Firmware Flasher
 
-[![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)](https://github.com/paxx12/SnapmakerU1-Extended-Firmware)
+[![Version](https://img.shields.io/badge/version-1.1.0-blue.svg)](https://github.com/kbaker827/SnapmakerU1-Extended-Firmware-GUI-Flasher)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)]()
 
-A cross-platform GUI application for flashing firmware to Snapmaker U1 3D printers.
+A cross-platform GUI application for flashing firmware to Snapmaker U1 3D printers with **embedded firmware** and **automatic update checking**.
 
 ![Screenshot](screenshot.png)
 
 ## Features
 
+- 📦 **Embedded firmware** - No browsing needed, firmware included!
+- 🔄 **Auto-update checking** - Checks GitHub for latest firmware on startup
+- 📥 **One-click updates** - Download and flash latest firmware automatically
 - 🔌 **Auto-detect serial ports** - Finds your printer automatically
-- 📁 **Drag & drop firmware** - Easy file selection
 - 📊 **Progress tracking** - Real-time flash progress
 - 📝 **Detailed logging** - See exactly what's happening
 - ✅ **Connection testing** - Verify before flashing
 - 🖥️ **Cross-platform** - Works on Windows, macOS, and Linux
+
+## What's New in v1.1.0
+
+✨ **Embedded Firmware** - Firmware bundled with the app, no separate download needed
+✨ **GitHub Auto-Check** - Automatically checks for firmware updates on startup
+✨ **Smart Version Comparison** - Alerts you when newer firmware is available
+✨ **Download & Flash** - One-click download latest firmware and flash
+✨ **Multiple Sources** - Choose bundled, download latest, or browse custom firmware
 
 ## Download
 
@@ -23,16 +33,16 @@ A cross-platform GUI application for flashing firmware to Snapmaker U1 3D printe
 
 | Platform | Download |
 |----------|----------|
-| Windows | [SnapmakerU1-Flasher-Windows.exe](releases/latest) |
-| macOS | [SnapmakerU1-Flasher-macOS.app.zip](releases/latest) |
-| Linux | [SnapmakerU1-Flasher-Linux](releases/latest) |
+| Windows | [SnapmakerU1-Flasher-Windows.exe](https://github.com/kbaker827/SnapmakerU1-Extended-Firmware-GUI-Flasher/releases/latest) |
+| macOS | [SnapmakerU1-Flasher-macOS.app.zip](https://github.com/kbaker827/SnapmakerU1-Extended-Firmware-GUI-Flasher/releases/latest) |
+| Linux | [SnapmakerU1-Flasher-Linux](https://github.com/kbaker827/SnapmakerU1-Extended-Firmware-GUI-Flasher/releases/latest) |
 
 ### Run from Source
 
 ```bash
 # Clone the repository
-git clone https://github.com/paxx12/SnapmakerU1-Extended-Firmware.git
-cd SnapmakerU1-Extended-Firmware
+git clone https://github.com/kbaker827/SnapmakerU1-Extended-Firmware-GUI-Flasher.git
+cd SnapmakerU1-Extended-Firmware-GUI-Flasher
 
 # Install dependencies
 pip install -r requirements.txt
@@ -40,6 +50,8 @@ pip install -r requirements.txt
 # Run the application
 python snapmaker_u1_flasher.py
 ```
+
+The app will automatically check GitHub for firmware updates on startup!
 
 ## Requirements
 
@@ -58,12 +70,24 @@ python snapmaker_u1_flasher.py
 
 ## Usage
 
+### Quick Start (Embedded Firmware)
+
 1. **Connect your printer** via USB cable
 2. **Select the serial port** (auto-detected)
 3. **Choose baud rate** (usually 115200 or 250000)
-4. **Browse for firmware file** (.bin, .hex, .elf)
+4. **Select firmware source:**
+   - **Use Bundled** - Flash the included firmware (fastest)
+   - **Download Latest** - Check GitHub and flash newest version
+   - **Browse File** - Select your own firmware file (.bin, .hex, .elf)
 5. **Click "Flash Firmware"**
 6. **Wait for completion** - Do not disconnect!
+
+### Auto-Update Workflow
+
+1. Launch the app - it checks GitHub automatically
+2. If update available, you'll see: **⚠️ Update available! v1.0 → v1.1**
+3. Click **"📥 Download Latest"** to download new firmware
+4. Or select **"Download Latest"** source and click **"Flash Firmware"** to download & flash in one step!
 
 ## Building from Source
 
@@ -129,11 +153,28 @@ MIT License - See [LICENSE](LICENSE) file
 - Serial Library: pyserial
 - Created by: paxx12
 
+## Bundling Firmware with Executable
+
+When building executables, you can bundle firmware:
+
+**PyInstaller:**
+```bash
+pyinstaller --onefile --windowed \
+  --add-data "firmware.bin:." \
+  snapmaker_u1_flasher.py
+```
+
+The app searches for firmware in:
+- Same directory as executable
+- `firmware/` subdirectory  
+- `~/.snapmaker_u1/` user directory
+- PyInstaller `_MEIPASS` temp folder
+
 ## Support
 
 For issues, questions, or feature requests:
-- GitHub Issues: https://github.com/paxx12/SnapmakerU1-Extended-Firmware/issues
-- Discussions: https://github.com/paxx12/SnapmakerU1-Extended-Firmware/discussions
+- GitHub Issues: https://github.com/kbaker827/SnapmakerU1-Extended-Firmware-GUI-Flasher/issues
+- Discussions: https://github.com/kbaker827/SnapmakerU1-Extended-Firmware-GUI-Flasher/discussions
 
 ---
 
