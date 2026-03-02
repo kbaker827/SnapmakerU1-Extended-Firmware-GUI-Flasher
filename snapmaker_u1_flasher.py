@@ -15,12 +15,13 @@ from pathlib import Path
 from datetime import datetime
 
 class SnapmakerU1Flasher:
-    VERSION = "2.0.0"
+    VERSION = "2.0.1"
     APP_NAME = "Snapmaker U1 Firmware Flasher"
     
-    # GitHub config - now points to renamed repo
-    GITHUB_USER = "kbaker827"
-    GITHUB_REPO = "SnapmakerU1-Extended-Firmware-GUI-Flasher"
+    # GitHub config - Check paxx12's repo for FIRMWARE updates
+    # (The flasher app itself is at kbaker827/SnapmakerU1-Extended-Firmware-GUI-Flasher)
+    GITHUB_USER = "paxx12"
+    GITHUB_REPO = "SnapmakerU1-Extended-Firmware"
     GITHUB_API = f"https://api.github.com/repos/{GITHUB_USER}/{GITHUB_REPO}"
     GITHUB_RELEASES = f"{GITHUB_API}/releases/latest"
     
@@ -154,9 +155,14 @@ class SnapmakerU1Flasher:
         ttk.Label(row4, text="Flash Source:", font=('Segoe UI', 9, 'bold')).pack(side=tk.LEFT)
         
         self.source_var = tk.StringVar(value="bundled")
+        self.source_var.trace_add('write', self._on_source_change)
+        
         ttk.Radiobutton(row4, text="Use Bundled", variable=self.source_var, value="bundled").pack(side=tk.LEFT, padx=(10,5))
         ttk.Radiobutton(row4, text="Download Latest", variable=self.source_var, value="download").pack(side=tk.LEFT, padx=(0,5))
         ttk.Radiobutton(row4, text="Browse File", variable=self.source_var, value="browse").pack(side=tk.LEFT)
+        
+        # Store browsed file path
+        self.browsed_firmware_path = None
     
     def _create_connection_section(self, parent):
         conn = ttk.LabelFrame(parent, text="Printer Connection", padding="10")
@@ -225,6 +231,35 @@ class SnapmakerU1Flasher:
         self.flash_btn.pack(side=tk.LEFT, padx=(0,5))
         self.cancel_btn = ttk.Button(right, text="⏹ Cancel", command=self.cancel_flash, state=tk.DISABLED, width=12)
         self.cancel_btn.pack(side=tk.LEFT)
+    
+    def _on_source_change(self, *args):
+        """Handle firmware source selection change"""
+        source = self.source_var.get()
+        if source == "browse":
+            # Open file dialog immediately when Browse is selected
+            self._browse_for_firmware()
+    
+    def _browse_for_firmware(self):
+        """Open file dialog to browse for firmware"""
+        path = filedialog.askopenfilename(
+            title="Select Firmware File",
+            filetypes=[
+                ('Firmware files', '*.bin *.hex *.elf *.fw'),
+                ('Binary files', '*.bin'),
+                ('Hex files', '*.hex'),
+                ('All files', '*.*')
+            ]
+        )
+        if path:
+            self.browsed_firmware_path = path
+            version = self._extract_version(Path(path))
+            self._log(f"Selected firmware: {path}")
+            self._log(f"Version: {version}")
+            # Show selected file in UI
+            self.status_var.set(f"Selected: {version}")
+        else:
+            # User cancelled - revert to bundled
+            self.source_var.set("bundled")
     
     def _fmt_size(self, path):
         if not path: return "0 B"
@@ -435,11 +470,12 @@ class SnapmakerU1Flasher:
                 fw_ver = self.bundled_firmware_version
                 
         elif source == "browse":
-            fw_path = filedialog.askopenfilename(
-                title="Select Firmware",
-                filetypes=[('Firmware', '*.bin *.hex *.elf *.fw'), ('All', '*.*')]
-            )
-            if not fw_path: return
+            if not self.browsed_firmware_path or not os.path.exists(self.browsed_firmware_path):
+                # Try to browse again if no file selected
+                self._browse_for_firmware()
+                if not self.browsed_firmware_path:
+                    return
+            fw_path = self.browsed_firmware_path
             fw_ver = self._extract_version(Path(fw_path))
         else:
             return
