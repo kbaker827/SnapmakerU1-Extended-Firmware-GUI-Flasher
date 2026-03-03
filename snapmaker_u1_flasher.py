@@ -7,7 +7,7 @@ Cross-platform GUI with embedded firmware & GitHub auto-update checking
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 import threading
-import os, sys, platform, time, hashlib, json, re
+import os, sys, platform, time, hashlib, json, re, webbrowser
 import serial
 import serial.tools.list_ports
 import urllib.request, urllib.error
@@ -725,20 +725,55 @@ GitHub: https://github.com/kbaker827/SnapmakerU1-Extended-Firmware-GUI-Flasher
         ttk.Button(win, text="Close", command=win.destroy).pack(pady=10)
     
     def show_about(self):
-        about = f"""{self.APP_NAME}
+        win = tk.Toplevel(self.root)
+        win.title("About")
+        win.geometry("480x320")
+        win.resizable(False, False)
 
-Version: {self.VERSION}
-Platform: {platform.system()} {platform.machine()}
-Python: {platform.python_version()}
+        txt = tk.Text(win, wrap=tk.WORD, padx=15, pady=12,
+                      font=('Segoe UI', 10), relief=tk.FLAT,
+                      cursor="arrow")
+        txt.pack(fill=tk.BOTH, expand=True)
 
-Bundled: {self.bundled_firmware_version or 'None'}
-Latest: {self.latest_firmware_version or 'Unknown'}
+        # Non-link content
+        txt.insert(tk.END, f"{self.APP_NAME}\n\n", "bold")
+        txt.insert(tk.END,
+            f"Version:   {self.VERSION}\n"
+            f"Platform:  {platform.system()} {platform.machine()}\n"
+            f"Python:    {platform.python_version()}\n\n"
+            f"Bundled:   {self.bundled_firmware_version or 'None'}\n"
+            f"Latest:    {self.latest_firmware_version or 'Unknown'}\n\n"
+            "Firmware repo:  ")
 
-GitHub: github.com/{self.GITHUB_USER}/{self.GITHUB_REPO}
+        # Firmware repo link
+        fw_url = f"https://github.com/{self.GITHUB_USER}/{self.GITHUB_REPO}"
+        txt.insert(tk.END, fw_url, "link_fw")
 
-License: MIT
-"""
-        messagebox.showinfo("About", about)
+        txt.insert(tk.END, "\nFlasher app:    ")
+
+        # Flasher app repo link
+        app_url = "https://github.com/kbaker827/SnapmakerU1-Extended-Firmware-GUI-Flasher"
+        txt.insert(tk.END, app_url, "link_app")
+
+        txt.insert(tk.END, "\n\nLicense: MIT\n")
+
+        # Tag styling
+        txt.tag_config("bold", font=('Segoe UI', 11, 'bold'))
+        txt.tag_config("link_fw",  foreground="#0066cc", underline=True, font=('Segoe UI', 10))
+        txt.tag_config("link_app", foreground="#0066cc", underline=True, font=('Segoe UI', 10))
+
+        # Click bindings
+        txt.tag_bind("link_fw",  "<Button-1>", lambda e: webbrowser.open(fw_url))
+        txt.tag_bind("link_app", "<Button-1>", lambda e: webbrowser.open(app_url))
+
+        # Cursor changes on hover
+        txt.tag_bind("link_fw",  "<Enter>", lambda e: txt.config(cursor="hand2"))
+        txt.tag_bind("link_fw",  "<Leave>", lambda e: txt.config(cursor="arrow"))
+        txt.tag_bind("link_app", "<Enter>", lambda e: txt.config(cursor="hand2"))
+        txt.tag_bind("link_app", "<Leave>", lambda e: txt.config(cursor="arrow"))
+
+        txt.config(state=tk.DISABLED)
+        ttk.Button(win, text="Close", command=win.destroy).pack(pady=10)
     
     def run(self):
         self._log(f"{self.APP_NAME} v{self.VERSION} started")
