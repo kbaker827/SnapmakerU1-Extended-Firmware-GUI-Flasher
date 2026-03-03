@@ -15,7 +15,7 @@ from pathlib import Path
 from datetime import datetime
 
 class SnapmakerU1Flasher:
-    VERSION = "2.1.1"
+    VERSION = "2.2.0"
     APP_NAME = "Snapmaker U1 Firmware Flasher"
     
     # GitHub config - Check paxx12's repo for FIRMWARE updates
@@ -380,8 +380,8 @@ class SnapmakerU1Flasher:
         try:
             b_parts = [int(x) for x in bundled.split('.') if x.isdigit()]
             l_parts = [int(x) for x in latest.split('.') if x.isdigit()]
-            needs = any(l > b for l, b in zip(l_parts, b_parts))
-        except:
+            needs = tuple(l_parts) > tuple(b_parts)
+        except Exception:
             needs = latest != bundled and latest != "0"
         
         self.needs_update = needs
@@ -571,80 +571,95 @@ class SnapmakerU1Flasher:
         threading.Thread(target=self._flash_thread, args=(fw_path, port), daemon=True).start()
     
     def _flash_thread(self, fw_path, port):
+        ser = None
         try:
             baud = int(self.baud_var.get())
             fw_size = os.path.getsize(fw_path)
-            
-            self._log(f"Opening {port} @ {baud}...")
-            
+
+            self.root.after(0, lambda: self._log(f"Opening {port} @ {baud}..."))
+
             ser = serial.Serial(port, baud, timeout=1)
-            self._log("Connected")
-            self._log("Entering bootloader...")
-            
+            self.root.after(0, lambda: self._log("Connected"))
+            self.root.after(0, lambda: self._log("Entering bootloader..."))
+
             ser.write(b'M997\n')
             time.sleep(2)
             ser.close()
+            ser = None
             time.sleep(1)
-            
+
             try:
                 ser = serial.Serial(port, 115200, timeout=2)
-            except:
+            except serial.SerialException:
                 ser = serial.Serial(port, baud, timeout=2)
-            
-            self._log("Sending firmware...")
-            
+
+            self.root.after(0, lambda: self._log("Sending firmware..."))
+
             with open(fw_path, 'rb') as fw:
                 sent = 0
                 chunk_sz = 1024
-                
+
                 while True:
                     if self.cancel_requested:
-                        self._log("Cancelled", "warning")
+                        self.root.after(0, lambda: self._log("Cancelled", "warning"))
                         break
-                    
+
                     chunk = fw.read(chunk_sz)
-                    if not chunk: break
-                    
+                    if not chunk:
+                        break
+
                     ser.write(chunk)
                     sent += len(chunk)
-                    
+
                     prog = (sent / fw_size) * 100
-                    self.progress_var.set(prog)
-                    self.prog_detail_var.set(f"{self._fmt_size(sent)} / {self._fmt_size(fw_size)}")
-                    
+                    detail = f"{self._fmt_size_bytes(sent)} / {self._fmt_size_bytes(fw_size)}"
+                    self.root.after(0, lambda p=prog: self.progress_var.set(p))
+                    self.root.after(0, lambda d=detail: self.prog_detail_var.set(d))
+
                     time.sleep(0.01)
                     if ser.in_waiting:
                         resp = ser.read(ser.in_waiting)
                         if b'error' in resp.lower():
                             raise Exception(f"Printer error: {resp.decode('utf-8', errors='ignore')}")
-            
+
             if not self.cancel_requested:
-                self._log("Verifying...")
+                self.root.after(0, lambda: self._log("Verifying..."))
                 time.sleep(3)
                 ser.write(b'M115\n')
                 time.sleep(1)
                 resp = ser.read(ser.in_waiting or 100)
-                
+
                 if resp:
-                    self._log("✅ Flash successful!", "success")
-                    self.prog_status_var.set("Complete")
-                    messagebox.showinfo("Success", "Firmware flashed!\n\nPower cycle your printer.")
+                    self.root.after(0, lambda: self._log("✅ Flash successful!", "success"))
+                    self.root.after(0, lambda: self.prog_status_var.set("Complete"))
+                    self.root.after(0, lambda: messagebox.showinfo("Success", "Firmware flashed!\n\nPower cycle your printer."))
                 else:
-                    self._log("⚠️ Flash complete (no verify)", "warning")
-                    messagebox.showwarning("Warning", "Completed but verification unclear")
-            
+                    self.root.after(0, lambda: self._log("⚠️ Flash complete (no verify)", "warning"))
+                    self.root.after(0, lambda: messagebox.showwarning("Warning", "Completed but verification unclear"))
+
             ser.close()
-            
+            ser = None
+
         except Exception as e:
-            self._log(f"❌ Flash failed: {e}", "error")
-            self.prog_status_var.set("Failed")
-            messagebox.showerror("Failed", str(e))
+            err = str(e)
+            self.root.after(0, lambda: self._log(f"❌ Flash failed: {err}", "error"))
+            self.root.after(0, lambda: self.prog_status_var.set("Failed"))
+            self.root.after(0, lambda: messagebox.showerror("Failed", err))
         finally:
+            if ser is not None:
+                try:
+                    ser.close()
+                except Exception:
+                    pass
             self.is_flashing = False
-            self.flash_btn.config(state=tk.NORMAL)
-            self.cancel_btn.config(state=tk.DISABLED)
-            if not self.cancel_requested:
-                self.progress_var.set(100)
+            cancel = self.cancel_requested
+            self.root.after(0, lambda: self._finish_flash(cancel))
+
+    def _finish_flash(self, was_cancelled):
+        self.flash_btn.config(state=tk.NORMAL)
+        self.cancel_btn.config(state=tk.DISABLED)
+        if not was_cancelled:
+            self.progress_var.set(100)
     
     def cancel_flash(self):
         if self.is_flashing:
@@ -682,9 +697,13 @@ QUICK START:
 6. Wait - do not disconnect!
 
 FIRMWARE SOURCES:
-• Use Bundled - Embedded firmware
-• Download Latest - From GitHub
-• Browse File - Custom firmware
+• Use Bundled - Use embedded or downloaded firmware
+• Browse File - Select a custom firmware file
+
+DOWNLOADING FIRMWARE:
+Use the 📥 Download Base or 📥 Download Extended
+buttons in the Firmware Status section to fetch the
+latest release from GitHub.
 
 AUTO-UPDATE:
 Checks GitHub on startup for new releases.
