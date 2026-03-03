@@ -22,6 +22,7 @@ echo Building Windows executable...
 pyinstaller ^
     --onefile ^
     --windowed ^
+    --icon=icon.ico ^
     --name "SnapmakerU1-Flasher" ^
     --clean ^
     snapmaker_u1_flasher.py
