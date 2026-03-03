@@ -15,8 +15,15 @@ from pathlib import Path
 from datetime import datetime
 
 class SnapmakerU1Flasher:
-    VERSION = "2.2.0"
+    VERSION = "2.2.2"
     APP_NAME = "Snapmaker U1 Firmware Flasher"
+
+    # 32x32 RGBA PNG of a simple 3D printer (dark body, blue print head)
+    ICON_B64 = (
+        "iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAZUlEQVR42mNgAAJzc/P/"
+        "A4EZYGDUAVgFaQQocoBjxc7/xOJRB4w6YNQBw9sB+Eo3mjqAmKKbpiXhqAMIOYLmldGg"
+        "cgA1HD60HTCgUUDTXDDaKB11wIA4gBrZi2pmjTpgwB1AbwAAJOfDEhGMSJsAAAAASUVORK5CYII="
+    )
     
     # GitHub config - Check paxx12's repo for FIRMWARE updates
     # (The flasher app itself is at kbaker827/SnapmakerU1-Extended-Firmware-GUI-Flasher)
@@ -33,7 +40,14 @@ class SnapmakerU1Flasher:
         self.root.title(f"{self.APP_NAME} v{self.VERSION}")
         self.root.geometry("800x750")
         self.root.minsize(750, 700)
-        
+
+        # Set 3D printer window icon
+        try:
+            self._icon = tk.PhotoImage(data=self.ICON_B64)
+            self.root.iconphoto(True, self._icon)
+        except Exception:
+            pass
+
         # Windows DPI awareness
         if sys.platform == 'win32':
             try:
