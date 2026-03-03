@@ -22,13 +22,15 @@ echo "Installing dependencies..."
 pip3 install -r requirements.txt
 pip3 install pyinstaller
 
-# Determine output name
+# Determine output name and icon flag
 if [ "$OS" = "Darwin" ]; then
     OUTPUT_NAME="SnapmakerU1-Flasher-macOS"
     BUNDLE_FLAG="--windowed"
+    ICON_FLAG="--icon=icon.ico"
 else
     OUTPUT_NAME="SnapmakerU1-Flasher-Linux"
     BUNDLE_FLAG=""
+    ICON_FLAG=""
 fi
 
 # Build executable
@@ -36,6 +38,7 @@ echo "Building executable..."
 pyinstaller \
     --onefile \
     $BUNDLE_FLAG \
+    $ICON_FLAG \
     --name "$OUTPUT_NAME" \
     --clean \
     snapmaker_u1_flasher.py
