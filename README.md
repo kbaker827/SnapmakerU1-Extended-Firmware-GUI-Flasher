@@ -1,6 +1,6 @@
 # Snapmaker U1 Extended Firmware Flasher
 
-[![Version](https://img.shields.io/badge/version-2.0.0-blue.svg)](https://github.com/kbaker827/SnapmakerU1-Extended-Firmware-GUI-Flasher)
+[![Version](https://img.shields.io/badge/version-2.2.3-blue.svg)](https://github.com/kbaker827/SnapmakerU1-Extended-Firmware-GUI-Flasher)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)]()
 
@@ -11,21 +11,30 @@ A cross-platform GUI application for flashing firmware to Snapmaker U1 3D printe
 ## Features
 
 - 📦 **Embedded firmware** - No browsing needed, firmware included!
-- 🔄 **Auto-update checking** - Checks GitHub for latest firmware on startup
-- 📥 **One-click updates** - Download and flash latest firmware automatically
+- 🔄 **Auto-update checking** - Checks paxx12's repo for latest firmware on startup
+- 📊 **Download progress bar** - Visual feedback during firmware downloads
+- 🔀 **Base & Extended variants** - Download either firmware variant
 - 🔌 **Auto-detect serial ports** - Finds your printer automatically
-- 📊 **Progress tracking** - Real-time flash progress
+- 📈 **Flash progress tracking** - Real-time flash progress
 - 📝 **Detailed logging** - See exactly what's happening
 - ✅ **Connection testing** - Verify before flashing
 - 🖥️ **Cross-platform** - Works on Windows, macOS, and Linux
+- ⏱️ **Timeout protection** - Won't get stuck on network checks
 
-## What's New in v1.1.0
+## What's New in v2.2.3
 
+### Latest Features
+✨ **Proper Window Sizing** - All buttons visible immediately, no resizing needed (800x750)
+✨ **Timeout Protection** - No more getting stuck on "Checking...", 15-second timeout
+✨ **Download Progress Bar** - Visual feedback during firmware downloads
+✨ **Base & Extended Firmware** - Download either variant from paxx12's releases
+✨ **Fixed Browse Button** - File dialog opens immediately when selected
+
+### Previous Features
 ✨ **Embedded Firmware** - Firmware bundled with the app, no separate download needed
-✨ **GitHub Auto-Check** - Automatically checks for firmware updates on startup
-✨ **Smart Version Comparison** - Alerts you when newer firmware is available
-✨ **Download & Flash** - One-click download latest firmware and flash
-✨ **Multiple Sources** - Choose bundled, download latest, or browse custom firmware
+✨ **GitHub Auto-Check** - Checks paxx12's repo for firmware updates on startup
+✨ **Smart Version Comparison** - Compares versions and alerts on updates
+✨ **Multiple Sources** - Use bundled, download latest, or browse custom firmware
 
 ## Download
 
@@ -77,17 +86,18 @@ The app will automatically check GitHub for firmware updates on startup!
 3. **Choose baud rate** (usually 115200 or 250000)
 4. **Select firmware source:**
    - **Use Bundled** - Flash the included firmware (fastest)
-   - **Download Latest** - Check GitHub and flash newest version
    - **Browse File** - Select your own firmware file (.bin, .hex, .elf)
+5. **Or download latest:** Click **"📥 Download Base"** or **"📥 Download Extended"** to download from paxx12's repo
 5. **Click "Flash Firmware"**
 6. **Wait for completion** - Do not disconnect!
 
 ### Auto-Update Workflow
 
-1. Launch the app - it checks GitHub automatically
+1. Launch the app - it checks paxx12's GitHub repo automatically
 2. If update available, you'll see: **⚠️ Update available! v1.0 → v1.1**
-3. Click **"📥 Download Latest"** to download new firmware
-4. Or select **"Download Latest"** source and click **"Flash Firmware"** to download & flash in one step!
+3. Click **"📥 Download Base"** or **"📥 Download Extended"** to download
+4. Watch the progress bar fill up during download
+5. Click **"⚡ Flash Firmware"** when ready!
 
 ## Building from Source
 
@@ -148,10 +158,10 @@ MIT License - See [LICENSE](LICENSE) file
 
 ## Credits
 
-- Original firmware: Snapmaker Team
-- GUI Framework: Python tkinter
-- Serial Library: pyserial
-- Created by: paxx12
+- **Extended Firmware:** [paxx12](https://github.com/paxx12/SnapmakerU1-Extended-Firmware) - Excellent extended firmware for Snapmaker U1
+- **GUI Framework:** Python tkinter
+- **Serial Library:** pyserial
+- **Flasher Tool:** kbaker827 (this repo)
 
 ## Bundling Firmware with Executable
 
